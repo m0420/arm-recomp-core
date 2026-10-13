@@ -1537,8 +1537,20 @@ bool emit_block_transfer(std::ostringstream& body, const Instr& ins,
                 body << indent << "uint32_t " << pcv
                      << " = bus_read_u32(" << addr_var << " & ~3u);\n";
                 if (blk.s_bit) {
+                    // This path returns from inside the transfer loop, so the
+                    // base writeback below the loop would be skipped. Apply it
+                    // first, and in the register bank of the mode the LDM ran
+                    // in (runtime_exception_return swaps banks). LDM with the
+                    // base in the list never writes back (ARMv4T).
+                    const bool wb_before_return =
+                        blk.writeback && !((blk.reg_list >> blk.rn) & 1u);
                     body << indent << "if (" << mode_is_priv_non_system_expr()
-                         << ") { runtime_exception_return(" << pcv
+                         << ") { "
+                         << (wb_before_return
+                                 ? "g_cpu.R[" + std::to_string(blk.rn) + "] = " +
+                                       fb_var + "; "
+                                 : std::string())
+                         << "runtime_exception_return(" << pcv
                          << " & ~1u); runtime_tick("
                          << arm9_tick_expr(ins, true,
                              "((" + pcv + " & ~1u) | ((g_cpu.cpsr & CPSR_T_BIT) ? 1u : 0u))")

@@ -835,6 +835,7 @@ Interpreter::Result Interpreter::step(CPUState& cpu, Bus& bus, const Instr& i,
             // (e.g., EWRAM at 6 cycles per N + 3 cycles per S for
             // 32-bit). LDM keeps the 1I cycle from cycle_cost_base.
             bool first_access = true;
+            bool writeback_done = false;
             for (int reg = 0; reg < 16; ++reg) {
                 if (!(list & (1u << reg))) continue;
                 mem_cycles += bus.access_cycles(cursor & ~3u, 4,
@@ -848,6 +849,14 @@ Interpreter::Result Interpreter::step(CPUState& cpu, Bus& bus, const Instr& i,
                         // this is an exception return — SPSR → CPSR
                         // (and bank-swap). Otherwise plain PC load.
                         if (i.block.s_bit && is_priv_non_system(cpu.cpsr.mode)) {
+                            // The base writeback belongs to the register bank
+                            // of the mode the LDM ran in: do it before
+                            // exception_return swaps banks.
+                            if (i.block.writeback &&
+                                !((list >> i.block.rn) & 1u)) {
+                                cpu.R[i.block.rn] = final_base;
+                                writeback_done = true;
+                            }
                             exception_return(cpu, v & ~1u);
                         } else {
                             load_pc_interworking(cpu, v);
@@ -875,7 +884,8 @@ Interpreter::Result Interpreter::step(CPUState& cpu, Bus& bus, const Instr& i,
                 cursor += 4;
             }
             bool base_in_list = (list & (1u << i.block.rn)) != 0;
-            if (i.block.writeback && !(i.block.load && base_in_list)) {
+            if (i.block.writeback && !writeback_done &&
+                !(i.block.load && base_in_list)) {
                 cpu.R[i.block.rn] = final_base;
             }
             break;
