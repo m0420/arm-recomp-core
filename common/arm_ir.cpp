@@ -208,6 +208,28 @@ const char* shift_name(ShiftType t) {
     return "?";
 }
 
+// "rm" or "rm,<shift> #n" / "rm,<shift> rs" / "rm,rrx". `lsl #0` is the
+// identity shift and is elided.
+void append_shifted_reg(std::string& out, const ShiftedRegister& sr) {
+    char buf[64];
+    std::snprintf(buf, sizeof(buf), "r%u", sr.rm);
+    out += buf;
+    if (sr.type == ShiftType::LSL && !sr.by_register && sr.imm_or_rs == 0) {
+        return;  // lsl #0 elided
+    }
+    out += ",";
+    out += shift_name(sr.type);
+    if (sr.type == ShiftType::RRX) {
+        return;
+    }
+    if (sr.by_register) {
+        std::snprintf(buf, sizeof(buf), " r%u", sr.imm_or_rs);
+    } else {
+        std::snprintf(buf, sizeof(buf), " #%u", sr.imm_or_rs);
+    }
+    out += buf;
+}
+
 void append_op2(std::string& out, const Op2& op2) {
     char buf[64];
     if (op2.kind == Op2::Kind::Imm) {
@@ -215,23 +237,7 @@ void append_op2(std::string& out, const Op2& op2) {
         out += buf;
         return;
     }
-    std::snprintf(buf, sizeof(buf), "r%u", op2.shifted.rm);
-    out += buf;
-    if (op2.shifted.type == ShiftType::LSL && !op2.shifted.by_register &&
-        op2.shifted.imm_or_rs == 0) {
-        return;  // lsl #0 elided
-    }
-    out += ",";
-    out += shift_name(op2.shifted.type);
-    if (op2.shifted.type == ShiftType::RRX) {
-        return;
-    }
-    if (op2.shifted.by_register) {
-        std::snprintf(buf, sizeof(buf), " r%u", op2.shifted.imm_or_rs);
-    } else {
-        std::snprintf(buf, sizeof(buf), " #%u", op2.shifted.imm_or_rs);
-    }
-    out += buf;
+    append_shifted_reg(out, op2.shifted);
 }
 
 void append_reglist(std::string& out, uint16_t list) {
@@ -318,10 +324,11 @@ std::string format_ir(const Instr& i) {
             out += buf;
             if (!i.mem.pre_indexed) out += "]";
             if (i.mem.by_register) {
-                std::snprintf(buf, sizeof(buf), ",%sr%u",
-                              i.mem.add ? "+" : "-",
-                              i.mem.reg_offset.rm);
-                out += buf;
+                // The register offset is a full shifter operand
+                // (`ldr r1,[r12,r5,lsl #2]`); render the shift, not just Rm.
+                out += ",";
+                out += i.mem.add ? "+" : "-";
+                append_shifted_reg(out, i.mem.reg_offset);
             } else if (i.mem.imm_offset != 0) {
                 std::snprintf(buf, sizeof(buf), ",#%s0x%x",
                               i.mem.add ? "" : "-", i.mem.imm_offset);
